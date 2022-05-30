@@ -5,7 +5,15 @@ defmodule AppBuilder.Utils do
 
   def cmd!(bin, args, opts \\ []) do
     opts = Keyword.put_new(opts, :into, IO.stream())
-    {_, 0} = System.cmd(bin, args, opts)
+    {out, status} = System.cmd(bin, args, opts)
+
+    if status != 0 do
+      if is_binary(out) do
+        IO.write(out)
+      end
+
+      raise "command exited with #{status}"
+    end
   end
 
   def shell!(command, opts \\ []) do
@@ -73,5 +81,31 @@ defmodule AppBuilder.Utils do
 
   def normalize_icon_path(path_per_os) when is_list(path_per_os) do
     Keyword.fetch!(path_per_os, AppBuilder.os())
+  end
+
+  def copy_dir(from, to, options \\ []) do
+    File.mkdir_p!(Path.dirname(to))
+    log(:green, "creating", Path.relative_to_cwd(to), options)
+    File.cp_r!(from, to)
+  end
+
+  def copy_file(source, target, options \\ []) do
+    create_file(target, File.read!(source), options)
+  end
+
+  def copy_template(source, target, assigns, options \\ []) do
+    create_file(target, EEx.eval_file(source, assigns: assigns), options)
+  end
+
+  def create_file(path, contents, options \\ []) when is_binary(path) do
+    log(:green, :creating, Path.relative_to_cwd(path), options)
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, contents)
+  end
+
+  def log(color, command, message, options \\ []) do
+    unless options[:quiet] do
+      Mix.shell().info([color, "* #{command} ", :reset, message])
+    end
   end
 end

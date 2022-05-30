@@ -3,6 +3,91 @@ defmodule AppBuilder.MacOS do
 
   import AppBuilder.Utils
 
+  @templates_path "#{__ENV__.file}/../../templates"
+
+  def bundle(release, options) do
+    app_name = options[:name]
+
+    app_path = "#{Mix.Project.build_path()}/#{app_name}.app"
+    File.rm_rf!(app_path)
+    tmp_dir = "#{Mix.Project.build_path()}/tmp"
+    contents_path = "#{app_path}/Contents"
+    resources_path = "#{contents_path}/Resources"
+
+    copy_dir(release.path, "#{resources_path}/rel")
+
+    launcher_eex_path = Path.expand("#{@templates_path}/macos/Launcher.swift.eex")
+    launcher_src_path = "#{tmp_dir}/Launcher.swift"
+    launcher_bin_path = "#{contents_path}/MacOS/#{app_name}Launcher"
+    copy_template(launcher_eex_path, launcher_src_path, release: release)
+
+    File.mkdir!("#{contents_path}/MacOS")
+    log(:green, :creating, Path.relative_to_cwd(launcher_bin_path))
+
+    cmd!("swiftc", [
+      "-warnings-as-errors",
+      "-target",
+      swiftc_target(),
+      "-o",
+      launcher_bin_path,
+      launcher_src_path
+    ])
+
+    icon_path = options[:icon_path]
+    dest_path = "#{resources_path}/AppIcon.icns"
+    create_icon(icon_path, dest_path)
+
+    for type <- options[:document_types] || [] do
+      if src_path = type[:icon_path] do
+        dest_path = "#{resources_path}/#{type.name}Icon.icns"
+        create_icon(src_path, dest_path)
+      end
+    end
+
+    copy_template(
+      Path.expand("#{@templates_path}/macos/Info.plist.eex"),
+      "#{contents_path}/Info.plist",
+      release: release,
+      app_options: options
+    )
+
+    if options[:macos_build_dmg] do
+      create_dmg(release, options)
+    end
+
+    File.rm_rf!(tmp_dir)
+    release
+  end
+
+  defp create_dmg(release, options) do
+    app_name = Keyword.fetch!(options, :name)
+    dmg_path = "#{Mix.Project.build_path()}/dmg"
+    app_path = "#{dmg_path}/#{app_name}.app"
+    File.mkdir_p!(dmg_path)
+    File.ln_s!("/Applications", "#{dmg_path}/Applications")
+
+    File.cp_r!(
+      "#{Mix.Project.build_path()}/#{app_name}.app",
+      app_path
+    )
+
+    to_sign =
+      "#{app_path}/**"
+      |> Path.wildcard()
+      |> Enum.filter(fn file ->
+        stat = File.lstat!(file)
+        Bitwise.band(0o100, stat.mode) != 0 and stat.type == :regular
+      end)
+
+    to_sign = to_sign ++ [app_path]
+
+    entitlements_path = "#{@templates_path}/entitlements.plist"
+    codesign = []
+    codesign(to_sign, "--options=runtime --entitlements=#{entitlements_path}", codesign)
+
+    release
+  end
+
   def build_mac_app_dmg(release, options) do
     {codesign, options} = Keyword.pop(options, :codesign)
     {notarize, options} = Keyword.pop(options, :notarize)
@@ -67,10 +152,11 @@ defmodule AppBuilder.MacOS do
     release
   end
 
-  defp codesign(paths, args, options) do
+  defp codesign(paths, extra_flags, options) do
     identity = Keyword.fetch!(options, :identity)
     paths = Enum.join(paths, " ")
-    shell!("codesign --force --timestamp --verbose=4 --sign=\"#{identity}\" #{args} #{paths}")
+    flags = "--force --timestamp --verbose=4 --sign=\"#{identity}\" #{extra_flags}"
+    shell!("codesign #{flags} #{paths}")
   end
 
   defp notarize(path, options) do
@@ -189,6 +275,7 @@ defmodule AppBuilder.MacOS do
   end
 
   defp create_icon(src_path, dest_path) do
+    log(:green, "creating", Path.relative_to_cwd(dest_path))
     src_path = normalize_icon_path(src_path)
 
     if Path.extname(src_path) == ".icns" do
@@ -210,7 +297,7 @@ defmodule AppBuilder.MacOS do
 
         size = size * scale
         out = "#{dest_tmp_path}/icon_#{size}x#{size}#{suffix}.png"
-        cmd!("sips", ~w(-z #{size} #{size} #{src_path} --out #{out}))
+        cmd!("sips", ~w(-z #{size} #{size} #{src_path} --out #{out}), into: "")
       end
 
       cmd!("iconutil", ~w(-c icns #{dest_tmp_path} -o #{dest_path}))

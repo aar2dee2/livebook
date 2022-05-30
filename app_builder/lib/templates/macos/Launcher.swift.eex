@@ -1,0 +1,39 @@
+import Foundation
+import Cocoa
+
+let fm = FileManager.default
+let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as! String
+let home = NSHomeDirectory()
+
+let logPath = "\(home)/Library/Logs/\(appName).log"
+if !fm.fileExists(atPath: logPath) { fm.createFile(atPath: logPath, contents: Data()) }
+let logFile = FileHandle(forUpdatingAtPath: logPath)
+logFile?.seekToEndOfFile()
+
+let releaseScriptPath = Bundle.main.path(forResource: "rel/bin/<%= @release.name %>", ofType: "")!
+
+let resourcePath = Bundle.main.resourcePath ?? ""
+let additionalPaths = "<%= Enum.map_join(@release.options[:app][:additional_paths], ":", &"\\(resourcePath)#{&1}") %>"
+
+var environment = ProcessInfo.processInfo.environment
+let path = environment["PATH"] ?? ""
+
+environment["PATH"] = "\(additionalPaths):\(path)"
+
+let task = Process()
+task.environment = environment
+task.launchPath = releaseScriptPath
+task.arguments = ["start"]
+task.standardOutput = logFile
+task.standardError = logFile
+try task.run()
+
+task.waitUntilExit()
+
+if task.terminationStatus != 0 {
+  let alert = NSAlert()
+  alert.alertStyle = .critical
+  alert.messageText = "\(appName) exited with error status \(task.terminationStatus)."
+  alert.informativeText = "Logs available at \(logPath)."
+  alert.runModal()
+}

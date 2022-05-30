@@ -17,6 +17,8 @@ defmodule Livebook.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
+      preferred_cli_env: [app: :prod],
+      preferred_cli_target: [app: :app],
       deps: with_lock(target_deps(Mix.target()) ++ deps()),
       escript: escript(),
       package: package(),
@@ -54,6 +56,7 @@ defmodule Livebook.MixProject do
 
   defp aliases do
     [
+      app: ["release app --overwrite"],
       "dev.setup": ["deps.get", "cmd npm install --prefix assets"],
       "dev.build": ["cmd npm run deploy --prefix ./assets"],
       "format.all": ["format", "cmd npm run format --prefix ./assets"]
@@ -126,6 +129,8 @@ defmodule Livebook.MixProject do
   ## Releases
 
   defp releases do
+    macos_notarization = macos_notarization()
+
     [
       livebook: [
         include_executables_for: [:unix],
@@ -133,6 +138,54 @@ defmodule Livebook.MixProject do
         rel_templates_path: "rel/server",
         steps: [:assemble, &remove_cookie/1]
       ],
+      app: [
+        include_erts: false,
+        rel_templates_path: "rel/app",
+        quiet: true,
+        steps: [
+          :assemble,
+          &remove_cookie/1,
+          &standalone_erlang_elixir/1,
+          &AppBuilder.bundle/1
+        ],
+        app: [
+          name: "Livebook",
+          url_schemes: ["livebook"],
+          document_types: [
+            %{
+              name: "LiveMarkdown",
+              extensions: ["livemd"],
+              icon_path: [
+                macos: "rel/app/icon.png",
+                windows: "rel/app/icon.ico"
+              ],
+              macos_role: "Editor"
+            }
+          ],
+          additional_paths: [
+            "/rel/erts-#{:erlang.system_info(:version)}/bin",
+            "/rel/vendor/elixir/bin"
+          ],
+          macos_is_agent_app: true,
+          macos_build_dmg: macos_notarization != nil,
+          macos_notarization: macos_notarization
+        ]
+      ]
+    ] ++ legacy_app_releases()
+  end
+
+  defp macos_notarization do
+    team_id = System.get_env("NOTARIZE_TEAM_ID")
+    apple_id = System.get_env("NOTARIZE_APPLE_ID")
+    password = System.get_env("NOTARIZE_PASSWORD")
+
+    if team_id && apple_id && password do
+      [team_id: team_id, apple_id: apple_id, password: password]
+    end
+  end
+
+  defp legacy_app_releases do
+    [
       mac_app: [
         include_executables_for: [:unix],
         include_erts: false,
