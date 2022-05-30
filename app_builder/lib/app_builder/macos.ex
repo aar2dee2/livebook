@@ -81,7 +81,7 @@ defmodule AppBuilder.MacOS do
 
     to_sign = to_sign ++ [app_path]
 
-    entitlements_path = "#{@templates_path}/entitlements.plist"
+    entitlements_path = "#{@templates_path}/Entitlements.plist"
     codesign = []
     codesign(to_sign, "--options=runtime --entitlements=#{entitlements_path}", codesign)
 
